@@ -1,6 +1,38 @@
 import * as Parser from "web-tree-sitter";
 import * as fs from "fs";
+import { assert } from "console";
 const webAssemblyFile = "C:\\Users\\niyou\\Documents\\tree-sitter-cpp\\tree-sitter-cpp.wasm";
+
+const sourceControlSwitch = true; 
+let parser : (Parser | null) = null;
+// string getUnusedVarName(void){
+function getUnusedVarName(node : Parser.SyntaxNode, state : State, update : UpDates) : string {
+//     int i, k, p, r;
+    let f = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_";
+    let res = "";
+    for(let k = 8; ; k++) {
+        for(let p = 0; p < 100; p++) {
+            res = "";
+            let r = Math.floor(Math.random() * 52);
+            res += f[r];
+            for(let i = 1; i < k; i++) {
+                //r = rand() % f.length();
+                r = Math.floor(Math.random() * 63);
+                res += f[r];
+            }
+
+//       if(localvar.count(res)) continue;
+//       if(argvar.count(res)) continue;
+//       if(globalvar.count(res)) continue; //not realized yet
+
+          return res;
+        }
+    }
+
+
+    return res;
+}
+
 class NScope {
     private _scopeName = "";
     public get scopeName() {
@@ -287,11 +319,34 @@ class VariableBuilder {
 
 
 class SourceControl {
-    
+    name : string = "";
+    sourceCode : string[] = [];
+    dependencies : Map<string, number> = new Map<string, number>();
+    type : string = ""; //front or back or initializing
+    declaredIdentifiers : string[] = [];
+    priorities : number = 0;
+    context : string[] = [];
 }
 
+interface SC {
+    name : string;
+    sourceCode : string[];
+    dependencies : string[];
+    type : string;
+    identifiers : string[];
+    priorities : number ;
+    context : string[];
+}
+
+const blockSC : SourceControl[] = [];
+const allDependencies : Map<string, number> = new Map<string, number>();
 class State {
     indent : number = 0;
+    fileName : string = "";
+    scope : NScope = new NScope();
+    sourceControlName : string = "";
+    currentcontext : string[] = [];
+    topLevel : boolean = false;
 }
 
 class UpDates{
@@ -299,10 +354,13 @@ class UpDates{
     //identifier if we want to find numerals and functions for the sake of template
     requireType : boolean = false;
     variableBuilder : VariableBuilder = new VariableBuilder();
+    sourceControl : SourceControl = new SourceControl();
 }
 
-export function scanTopLevel(node : Parser.SyntaxNode) {
-	return scanClosure(node, node.type, new State(), new UpDates());
+export function scanTopLevel(node : Parser.SyntaxNode, fileName : string) {
+    let state = new State();
+    state.fileName = fileName; 
+	return scanClosure(node, node.type, state, new UpDates());
 }
 function callDefault() {
     console.log("default");
@@ -446,17 +504,33 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
                             break;
                         default:
                             if(!firstparenthesis){
+                                
                                 headText += scanClosure(childNode, childNode.type, state, update).join("");
                             }else{
                                 let copyState = {...state};
+                                copyState.scope = state.scope;
                                 copyState.indent ++;
-                                let y = scanClosure(childNode, childNode.type, copyState, update);
-                                if(childNode.type === "else"){
-                                    copyState.indent--;
+                                let y : string[] = [];
+                                //if(childNode.type.indexOf("expression") !== -1){
+                                if(childNode.type !== "compound_statement" && childNode.type !== "else"){
+                                    let newText = "{" + echoReplace(childNode, state, update, ",", ";") + "}";
+                                    if(parser){
+                                        copyState.indent--;
+                                       let newTextNode = parser.parse(newText).rootNode;
+                                        assert( newTextNode.children[0].type === "compound_statement");
+                                        y = scanClosure(newTextNode.children[0], "compound_statement", copyState, update);
+                                    }
+                                }else{
+                                     y = scanClosure(childNode, childNode.type, copyState, update);
+                                     if(childNode.type === "else"){
+                                        copyState.indent--;
+                                    }
+                                    for(let i = 0; i < y.length; i++){
+                                        y[i] = "\t".repeat((copyState.indent)) + y[i];
+                                    }
                                 }
-                                for(let i = 0; i < y.length; i++){
-                                    y[i] = "\t".repeat((copyState.indent)) + y[i];
-                                }
+                                
+                                
                                 transcompilationResult = [...transcompilationResult, ...y];
                             }
                             break;
@@ -501,6 +575,217 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
                 transcompilationResult = [textBody];    
             }
             break;
+        
+        case "repeat_statement":
+            if(true){
+                let headText = "";
+                let structure = "";
+                let hasbracket = false;
+                let defaultSlots : string[] =  [];
+                let code : string = "";
+                let endOfParenthesis = false;
+                for(const childNode of node.children){
+                    switch(childNode.type){
+                        case "[":
+                            structure += childNode.text;
+                            break;
+                        case "]":
+                            structure += childNode.text;
+                            break;
+                        case "(":
+                            structure += childNode.text;
+                            break;
+                        case ")":
+                            endOfParenthesis = true;
+                            structure += childNode.text;
+                            break;
+                        case ",":
+                            structure += childNode.text;
+                            break;
+                        case "compound_statement":
+                            // let copyState = {...state};
+                            // copyState.scope = state.scope;
+                            
+                            // hasbracket = true;
+                            // if(headText === ""){
+                            //     headText = childNode.text;
+                            // }
+                            // let y = scanClosure(childNode, childNode.type, copyState, update);
+                            
+                            // defaultSlots = [...defaultSlots, ...y];
+                            code += childNode.text;
+                            break;
+                        default:
+                            if(headText === ""){
+                                headText = childNode.text;
+                            }
+                            if(!endOfParenthesis){
+                                defaultSlots.push(scanClosure(childNode, childNode.type, state, update).join(" "));
+                            }else{
+                                code += "{";
+                                code += childNode.text;
+                                code += "}";
+                            }
+                            break;
+                    }
+                }
+                if(headText.indexOf("_") === -1){
+                    // int REP_fg = 0, rrep_fg = 0;
+                    // eslint-disable-next-line @typescript-eslint/naming-convention
+                    let REP_flag = false, rrep_flag = false;
+                    if(headText.indexOf("REP") !== -1){
+                        REP_flag = true;
+                    }
+                    if(headText.length >= 4){
+                        rrep_flag = true;
+                    }
+                    let stringArgs = ["", "", "", ""];
+                    let additionalClause = "";
+                    let additionalHeader : string[] = [];  // for REP_fg
+                    let cnt = 0;
+                    for(let i = 0; i < structure.length; i++){
+                        if(structure[i] === ",")
+                        {
+                            cnt++;
+                        }
+                    }
+                    let tmpArgs : string[] = [];
+                    if(structure.indexOf("[]") !== -1){
+                        let indices = getUnusedVarName(node, state, update);
+                        additionalClause = "auto & " + defaultSlots[2] + " = " + defaultSlots[1] + "[" + indices  + "];";
+                        tmpArgs.push(indices);
+                        for(let i = 3; i < defaultSlots.length; ++i){
+                            if(3 <= i && i <= 3 + cnt - 1){
+                                tmpArgs.push(defaultSlots[i]);
+                            }else{
+                                transcompilationResult.push(defaultSlots[i]);
+                            }
+                        }
+                    }else{
+                        for(let i = 1; i < defaultSlots.length ; ++i){
+                            if(1 <= i && i <= 1+cnt){
+                                tmpArgs.push(defaultSlots[i]);
+                            }else{
+                                transcompilationResult.push(defaultSlots[i]);
+                            }
+                        }    
+                        if(cnt === 0){
+                            let uVariable = getUnusedVarName(node, state, update);
+                            tmpArgs = [uVariable, ...tmpArgs];
+                        }
+                        if(REP_flag){
+                            switch(cnt){
+                                case 0:
+                                    if(true){
+                                        let uVariable = getUnusedVarName(node, state, update);
+                                        additionalHeader.push("int " + uVariable + " = (int)(" + tmpArgs[1] + ");");
+                                        tmpArgs[1] = uVariable;
+                                    }
+                                    break;
+                                case 1:
+                                    if(true){
+                                        let uVariable = getUnusedVarName(node, state, update);
+                                        additionalHeader.push("int " + uVariable + " = (int)(" + tmpArgs[2] + ");");
+                                        tmpArgs[2] = uVariable;
+                                    }
+                                    break;
+                                default:
+                                    if(true){
+                                        let uVariable = getUnusedVarName(node, state, update);
+                                        additionalHeader.push("int " + uVariable + " = (int)(" + tmpArgs[3] + ");");
+                                        tmpArgs[3] = uVariable;
+                                    }
+                                    break;
+                            }
+                        }
+                    }
+                    switch(cnt){
+                        case 0:
+                            if(true){
+                                stringArgs[0] = tmpArgs[0];
+                                stringArgs[1] = "0";
+                                stringArgs[2] = tmpArgs[1];
+                                if(rrep_flag === true){
+                                    stringArgs[3] = "++";
+                                }else{
+                                    stringArgs[3] = "--";
+                                }    
+                            }
+                            break;
+                        case 1:
+                            if(true){
+                                stringArgs[0] = tmpArgs[0];
+                                stringArgs[1] = "0";
+                                stringArgs[2] = tmpArgs[1];
+                                if(rrep_flag === true){
+                                    stringArgs[3] = "++";
+                                }else{
+                                    stringArgs[3] = "--";
+                                }    
+                            }
+                            break;
+                        case 2:
+                            if(true){
+                                stringArgs[0] = tmpArgs[0];
+                                stringArgs[1] = tmpArgs[1];
+                                stringArgs[2] = tmpArgs[2];
+                                if(rrep_flag === true){
+                                    stringArgs[3] = "++";
+                                }else{
+                                    stringArgs[3] = "--";
+                                }  
+                            }
+                            break;
+                        case 3:
+                            if(true){
+                                stringArgs[0] = tmpArgs[0];
+                                stringArgs[1] = tmpArgs[1];
+                                stringArgs[2] = tmpArgs[2];
+                                if(rrep_flag === true){
+                                    stringArgs[3] = "+=(" + tmpArgs[3]+")";
+                                }else{
+                                    stringArgs[3] = "-=(" + tmpArgs[3]+")";
+                                }  
+                            }
+                            break;
+                    }
+                    if(rrep_flag){
+                        let tmp = stringArgs[1];
+                        stringArgs[1] = stringArgs[2];
+                        stringArgs[2] = tmp;
+                        stringArgs[1] = "(" + stringArgs[1] + ")-1";
+                        stringArgs[2] = ">=(" +  stringArgs[2] + ")";
+                    }else{
+                        stringArgs[1] = "(" + stringArgs[1] + ")";
+                        stringArgs[2] = "<(" + stringArgs[2] + ")";
+                    }
+                    additionalHeader.push("for(int " + stringArgs[0] + " = " + stringArgs[1] + "; "+ stringArgs[0]  + stringArgs[2] + "; " + stringArgs[0]  + stringArgs[3] + ")");
+                    // if(!hasbracket){
+                    if(true){
+                        // let newText = ["{" , ...transcompilationResult, "}"];
+                        if(parser){
+                            //find first { and put in additionalClause
+                            let codeIndex = code.indexOf("{");
+                            code = code.substring(0, codeIndex+1) +"\t" + additionalClause + code.substring(codeIndex+1);
+                            let newnode = parser.parse(code).rootNode;
+                            let copyState = {...state};
+                            transcompilationResult = scanClosure(newnode.children[0], "compound_statement", copyState, update);
+                        }
+                    }
+                    transcompilationResult = [...additionalHeader, ...transcompilationResult];
+                    transcompilationResult = [transcompilationResult.join("\n")];
+                }else{
+                    console.log("error : repeat_statement");
+                }
+                //to be continued       
+            }
+            break;
+        case "if_expression":
+            if(true){
+                console.log("block");
+
+            }
+            break;
         case "for_range_loop":
         case "for_statement":
             if(true){
@@ -520,6 +805,7 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
                                 headText += scanClosure(childNode, childNode.type, state, update).join("");
                             }else{
                                 let copyState = {...state};
+                                copyState.scope = state.scope;
                                 copyState.indent ++;
                                 let y = scanClosure(childNode, childNode.type, copyState, update);
                                 for(let i = 0; i < y.length; i++){
@@ -607,6 +893,15 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
             if(true){
                 for(const childNode of node.children){
                     switch(childNode.type){
+                        case "ERROR":
+                            if(node.type === "assignment_expression"){
+                                //regular expression for numbers
+                                let reg = /^[0-9]+$/;
+                                if(reg.test(childNode.text)){
+                                    transcompilationResult = [...transcompilationResult,  childNode.text, "*"];
+                                    break;
+                                }
+                            }
                         default:
                             transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, update)];
                             break;
@@ -628,6 +923,7 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
         case "parameter_declaration":
         case "declaration":
             if(true){
+                
                 let newUpdate = new UpDates();
                 newUpdate.variableBuilder = new VariableBuilder();
                 let equalSymbol = false;
@@ -656,12 +952,21 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
                                 newUpdate.variableBuilder.addVariable(childNode.text, null);
                                 transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, newUpdate)];    
                             }else{
-                                transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, newUpdate)];
+                                transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, update)];
                             }
                             break;
                         default:
-                            transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, newUpdate)];
+                            if(equalSymbol){
+                                transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, update)];
+                            }else{
+                                transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, newUpdate)];
+                            }
                             break;
+                    }
+                }
+                if(state.topLevel){
+                    for(const x of newUpdate.sourceControl.declaredIdentifiers){
+                        update.sourceControl.declaredIdentifiers.push(x);
                     }
                 }
                 
@@ -741,6 +1046,7 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
         case "compound_statement":
             if(true){
                 let copyState = {...state};
+                copyState.scope = state.scope;
                 copyState.indent++;
                 for(const childNode of node.children){
                     switch(childNode.type){
@@ -771,6 +1077,7 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
                 update.currentType.basetype = node.text;
             }
         case "identifier":
+            findUsingIdentifier(node, state, update);
         case "field_identifier":
             transcompilationResult.push(node.text);
             break;
@@ -787,6 +1094,9 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
                     update.currentType.basetype = node.text;
                 }
                 transcompilationResult.push(attemptedReplacement + " ");
+                if(sourceControlSwitch){
+                    findUsingIdentifier(node, state, update);
+                }
             }
             break;
         case "template_type":
@@ -835,7 +1145,6 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
             }
             break;
         case "init_declarator":
-            console.log("init_declarator");
         case "array_declarator":
         case "pointer_declarator":
         case "reference_declarator":
@@ -870,6 +1179,9 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
                                 name = childNode.text;
                                 transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, update)];
                                 update.variableBuilder.addVariable(name, null);    
+                                if(sourceControlSwitch){
+                                    update.sourceControl.declaredIdentifiers.push(name);
+                                }
                             }else{
                                 let partialTranslated = scanClosure(childNode, childNode.type, state, update);
                                 if(!equalSymbol){
@@ -939,6 +1251,10 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
             if(true){
                 for(const childNode of node.children){
                     switch(childNode.type){
+                        case "identifier":
+                            if(sourceControlSwitch){
+                                update.sourceControl.declaredIdentifiers.push(childNode.text);
+                            }
                         default:
                             transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, update)];
                             break;
@@ -967,8 +1283,9 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
             break;
         case "declaration_list":
         case "field_declaration_list":
-            if(true){
+            if(state.sourceControlName === ""){
                 let copyState = {...state};
+                copyState.scope = state.scope;
                 copyState.indent++;
                 for(const childNode of node.children){
                     switch(childNode.type){
@@ -987,24 +1304,121 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
                 }
                 let bodyText = transcompilationResult.join("\n");
                 transcompilationResult = [bodyText];
+            }else{
+                let copyState = {...state};
+                copyState.scope = state.scope;
+                copyState.indent++;
+                for(const childNode of node.children){
+                    switch(childNode.type){
+                        case "function_definition":
+                            //see if  childNode.children[0].type contain "type"
+                            //substring test
+                            
+                            if(contain("type", childNode.children[0].type) && !contain("operator", childNode.children[1].children[0].type)){
+                                let newupdate = new UpDates();
+                                scanFunctionForSourceControl(childNode, copyState, newupdate);
+                                //we have assumed sourceControl over it
+                                scanClosure(childNode, childNode.type, copyState, newupdate);
+                                writeSource(newupdate.sourceControl);
+                            }else{
+                                if(childNode.children[0].type === "storage_class_specifier"){
+                                    if(contain("type", childNode.children[1].type) && !contain("operator", childNode.children[2].children[0].type)){
+                                        let newupdate = new UpDates();
+                                        scanFunctionForSourceControl(childNode, copyState, newupdate);
+                                        //we have assumed sourceControl over it
+                                        scanClosure(childNode, childNode.type, copyState, newupdate);
+                                        writeSource(newupdate.sourceControl);
+                                    }else{
+                                        scanClosure(childNode, childNode.type, copyState, update);
+                                        transcompilationResult = [...transcompilationResult , childNode.text];        
+                                    }
+                                }else{
+                                    scanClosure(childNode, childNode.type, copyState, update);
+                                    transcompilationResult = [...transcompilationResult , childNode.text];    
+                                }
+                            }
+                            break;
+                        case "template_declaration":
+                            //check if it is a function
+                            if(childNode.children[2].type === "function_definition"){
+                                let newupdate = new UpDates();
+                                scanFunctionForSourceControl(childNode, copyState, newupdate);
+                                //we have assumed sourceControl over it
+                                scanClosure(childNode, childNode.type, copyState, newupdate);
+                                writeSource(newupdate.sourceControl);
+                                break;
+                            }else{
+                                scanClosure(childNode, childNode.type, copyState, update);
+                                transcompilationResult = [...transcompilationResult , childNode.text];
+                            }
+                        default:
+                            //transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, copyState, update)];
+                            scanClosure(childNode, childNode.type, copyState, update);
+                            transcompilationResult = [...transcompilationResult , childNode.text];
+                            break;
+                    }
+                } 
+                for(let i = 0; i < transcompilationResult.length; i++){
+                    let x = transcompilationResult[i];
+                    if(x === "{" || x === "}") {
+                        transcompilationResult[i] = "\t".repeat((state.indent)) + x;
+                        continue;   
+                    }
+                    transcompilationResult[i] = "\t".repeat((copyState.indent)) + x;
+                }
+               
+                
             }
             break;
         case "namespace_definition":
         case "struct_specifier":
+            if(node.text.startsWith("struct Comb")){
+                console.log('here');
+            }
         case "class_specifier":
             if(true){
+                let structName = "";
                 for(const childNode of node.children){
                     switch(childNode.type){
+                        case "type_identifier":
+                            if(structName === ""){
+                                structName = childNode.text;
+                                let copyState = {...state};
+                                copyState.currentcontext.push(structName);
+                                transcompilationResult[0] = transcompilationResult[0] + " " + structName;
+                            }else{
+                                transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, update)];
+                            }
+                            break;
                         default:
                             transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, update)];
                             break;
                     }
                 }
+                if(sourceControlSwitch ){
+                    if(state.sourceControlName !== ""){
+                        update.sourceControl.sourceCode = transcompilationResult;
+                        update.sourceControl.declaredIdentifiers.push(structName);    
+                    }else{
+                        update.sourceControl.declaredIdentifiers.push(structName);
+                    }
+                }
                 transcompilationResult.push(";"); 
                 let bodyText = transcompilationResult.join(" ");
                 transcompilationResult = [bodyText];
+                state.currentcontext.pop();
             }
             break;
+        case "rep_perm":
+        case "rep_mcomb":
+        case "rep_scomb":
+        case "rep_marr":
+        case "rep_sarr":
+        case "rep_dist":
+        case "rep":
+        case "rrep":
+        case "REP":
+        case "RREP":
         case "abstract_pointer_declarator":
         case "abstract_reference_declarator":
         case "noexcept":
@@ -1039,6 +1453,12 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
         case "!":
         case "--":
         case ">":
+        case ">?=":
+        case "<?=":
+        case "%%=":
+        case "**=":
+        case "%%":
+        case "**":
         case "+=":
         case "-=":
         case "*=":
@@ -1141,13 +1561,69 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
             break;        
         
         case "translation_unit":
-            for(const childNode of node.namedChildren){
-                switch(childNode.type){
-                    default:
-                        transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, update)];
-                        break;
+            if(true){
+
+                for(let i = 0; i < node.children.length; i++){
+                    const childNode = node.children[i];
+                    switch(childNode.type){
+                        case "comment":
+                            if(true){
+                                if(sourceControlSwitch){
+                                    let interpretation = interpretComment(childNode, state, update);
+                                    if(interpretation === true && childNode.text.startsWith("//CodeBlockName:")){
+                                        if(childNode.text.startsWith("//CodeBlockName:Class")){
+                                            let classname = childNode.text.split(":")[1];
+                                            state.sourceControlName = classname;
+                                            for(let j = i+1; j < node.children.length; j++){
+                                                const childNode2 = node.children[j];
+                                                if(childNode2.type === "comment"){
+                                                    if(childNode2.text.startsWith("//CodeBlockName:")){
+                                                        i = j-1;
+                                                        break;
+                                                    }
+                                                    interpretation = interpretComment(childNode2, state, update);
+                                                }else{
+                                                    scanClosure(childNode2, childNode2.type, state, update);
+                                                }
+                                            }
+                                            state.sourceControlName = "";
+                                        }else{
+                                            
+                                            for(let j = i+1; j < node.children.length; ++j){
+                                                const childNode2 = node.children[j];
+                                                if(childNode2.type === "comment"){
+                                                    if(childNode2.text.startsWith("//CodeBlockName:")){
+                                                        break;
+                                                    }
+                                                    continue;
+                                                }
+                                                update.sourceControl.sourceCode.push(childNode2.text);
+                                            }
+                                        }
+                                    }    
+                                }
+                            }
+                            break;
+                        case "declaration":
+                            if(true){
+                                let nstate = {...state};
+                                nstate.topLevel = true;
+                                transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, nstate, update)];
+                                nstate.topLevel = false;
+
+                            }
+                            break;
+                        default:
+                            transcompilationResult = [...transcompilationResult , ...scanClosure(childNode, childNode.type, state, update)];
+                            break;
+                    }
+                }        
+                if(!sourceControlSwitch){
+                    for(const [key, value] of update.sourceControl.dependencies){   
+                        allDependencies.set(key, value);
+                    }
                 }
-            }                    
+            }
             break;            
         
         case "using_declaration":
@@ -1166,8 +1642,56 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
             break;
         case "\n":
             break;
-        
+        case "user_defined_literal":
+            // we want to match if it is [0-9]+d[0-9]+ 
+            let re = new RegExp('[0-9]+d[0-9]+');
+            if(re.test(node.text)){
+                //split around d,
+                let split = node.text.split("d");
+                //get the first part
+                let firstPart = split[0];
+                //get the second part
+                let secondPart = split[1];
+                //convert second part into a number
+                let secondPartNumber = parseInt(secondPart);
+                for(let i = 0; i < secondPartNumber; ++i){
+                    firstPart += "0";
+                }
+                transcompilationResult = [firstPart];
+            }else{
+                let se = new RegExp('[0-9]+[0-9a-zA-Z]+');
+                if(se.test(node.text)){
+                    let parts = [""];
+                    let u = node.text;
+                    for(let i = 0; i < u.length; ++i){
+                        //check if u[i] is a digit
+                        if(u[i] >= "0" && u[i] <= "9"){
+                            if(parts.length === 1){
+                                parts[0] += u[i];
+                            }else{
+                                parts[1] += u[i];
+                            }
+                        }else{
+                            parts.push("");
+                        }
+                    }
+                    transcompilationResult = [parts[0] + "*" + parts[1]];
+                }else{ 
+                    console.log("Error: user_defined_literal not implemented:" + node.text);
+                }
+            }
+
+
+            break;
 		default:
+            if(category === "ERROR"){
+                if(node.text === ";"){
+                    console.log("error");
+                }
+                console.log( "ERROR: " + node.text);
+                console.log(" Parent of Error" + node.parent?.text);
+            }
+
             console.log(category, "+++" , node.text);
             break;
 	}
@@ -1176,15 +1700,46 @@ export function scanClosure(node: Parser.SyntaxNode, category : string, state : 
 }
 
 async function readParser(){
+    let mapSC = new Map<string, SourceControl>();
+    if(!sourceControlSwitch){
+        const dependencies = fs.readFileSync("C:\\Users\\niyou\\Documents\\parserTest\\dependencies.json", "utf8");
+        const dependenciesJson : SC[] = JSON.parse(dependencies);
+        for(const dependency of dependenciesJson){
+            //convert SC to sourceControl
+            const sourceControl : SourceControl = {
+                sourceCode : dependency.sourceCode,
+                priorities : dependency.priorities,
+                declaredIdentifiers : dependency.identifiers,
+                name : dependency.name,
+                dependencies : new Map<string, number> (),
+                type : dependency.type,
+                context : dependency.context
+            };
+            for(const name of dependency.dependencies){
+                sourceControl.dependencies.set(name, 1);
+                    let parentDependencies = mapSC.get(name)?.dependencies;
+                    if(!parentDependencies){
+                        continue;
+                    }
+                    for(const [key, val] of parentDependencies){
+                    {
+                        sourceControl.dependencies.set(key, val);
+                    }
+            }
+        }
+            mapSC.set(dependency.name, sourceControl);
+            blockSC.push(sourceControl);
+        }
+    }
     await Parser.init();
-    const parser = new Parser();
+    parser = new Parser();
     const lang = await Parser.Language.load(webAssemblyFile);
     parser.setLanguage(lang);
     //read from test.cpp file
-    const file = fs.readFileSync("C:\\Users\\niyou\\Documents\\parserTest\\test.cpp", "utf8");
+    const file = fs.readFileSync("C:\\Users\\niyou\\Documents\\parserTest\\test.ocl", "utf8");
     const tree = parser.parse(file);
     const rootNode = tree.rootNode;
-    const aggregateResult_ = scanTopLevel(rootNode);
+    const aggregateResult_ = scanTopLevel(rootNode, "main.ocl");
     const result = [];
     result.push("#pragma GCC optimize(\"Ofast\")");
     result.push("#pragma GCC optimize(\"unroll-loops\")");
@@ -1192,6 +1747,54 @@ async function readParser(){
     result.push("#include<bits/stdc++.h>");
     result.push("using namespace std;");
     result.push("");
+    //compute dependencies closure:
+    let usedDependencies = new Set<string>();
+    for(const [key, value] of allDependencies){
+        usedDependencies.add(key);
+        let parentDependencies = mapSC.get(key)?.dependencies;
+        if(!parentDependencies){
+            continue;
+        }
+        for(const [ke, val] of parentDependencies){
+            usedDependencies.add(ke);
+        }
+    }
+    //convert usedDepenencies to array
+    let usedDependenciesArray = Array.from(usedDependencies);
+    //sort usedDependenciesArray based on priorities
+    usedDependenciesArray.sort((a, b) => {
+        let aPriority = mapSC.get(a)?.priorities;
+        let bPriority = mapSC.get(b)?.priorities;
+        if(aPriority === undefined || bPriority === undefined){
+            return 0;
+        }
+        return aPriority - bPriority;
+    });
+
+    
+    //console.log(usedDependencies);
+    let frontCode = "";
+    for(const key of usedDependenciesArray){
+        let res =  mapSC.get(key)?.sourceCode.join("\n");
+        let testFront = mapSC.get(key)?.type;
+        if(testFront === "front"){
+            if(res){
+                frontCode += res + "\n";
+            }                
+        }
+    }
+    if(true){
+        const tree = parser.parse(frontCode);
+        const rootNode = tree.rootNode;  
+        let frontResult_ = scanTopLevel(rootNode, "root.ocl");     
+        for(const line of frontResult_){
+            if(line.length > 0){
+                result.push(line);
+            }
+        } 
+    }
+    
+
     for(const line of aggregateResult_){
         if(line.length > 0){
             result.push(line);
@@ -1199,6 +1802,31 @@ async function readParser(){
     }
     //write result to output.cpp file with all the lines
     fs.writeFileSync("C:\\Users\\niyou\\Documents\\parserTest\\output.cpp", result.join("\n"));
+    if(sourceControlSwitch){
+        let blockSCC : SC[] = [];
+        let priorities = 0;
+        for(const x of blockSC){
+            let dependenciesRET = [];
+            for(const dependency of x.dependencies){
+                dependenciesRET.push(dependency[0]);
+            }
+            
+            blockSCC.push({
+                name : x.name,
+                sourceCode : processIt(x.sourceCode),
+                dependencies : dependenciesRET,
+                type: x.type,
+                identifiers : x.declaredIdentifiers,
+                priorities : priorities,
+                context : x.context
+            });
+            priorities++;
+
+        }
+        let retu = JSON.stringify(blockSCC, null, '\t');
+        fs.writeFileSync("C:\\Users\\niyou\\Documents\\parserTest\\test.json", retu);
+    }
+
 }
 
 function main(){
@@ -1263,5 +1891,153 @@ function typeReplacement(text: string) {
             break;
     }
     return text;
+}
+
+
+function interpretComment(node: Parser.SyntaxNode, state: State, update: UpDates) {
+    let text = node.text;
+    text = text.substring(2);
+    if(text.startsWith("CodeBlockName:")){
+        let name = text.substring(14);
+        if(update.sourceControl.name !== ""){
+            writeSource(update.sourceControl);
+            update.sourceControl = new SourceControl();
+        }
+        update.sourceControl.name = name.replace("\r", "");
+        return true;
+
+    }else if(text.startsWith("CodeBlockType:")){
+        let type = text.substring(14);
+        update.sourceControl.type = type.replace("\r", "");
+        return true;
+    }
+    return false;
+}
+
+
+function processIt(astri :Array<string>) : Array<string>{
+    let ret : string[] = [];
+    for(const text of astri){
+        ret = [...ret, ...text.split("\r\n")];
+    }
+
+    return ret;
+}
+
+function writeSource(sourceControl: SourceControl) {
+    let dependenciesRET = [];
+    for(const dependency of sourceControl.dependencies){
+        dependenciesRET.push(dependency[0]);
+    }
+    blockSC.push(sourceControl);
+
+}
+
+function findUsingIdentifier(node: Parser.SyntaxNode, state: State, update: UpDates) {
+    let identifierName = node.text;
+    let currentContext : string[] = [];
+    for(let i = 0; i <= state.currentcontext.length; ++i){
+        for(const x of blockSC){
+            if(x.name === update.sourceControl.name){
+                continue;
+            }
+            if(x.context.join("::") !== currentContext.join("::")){
+                continue;
+            }
+            for(const y of x.declaredIdentifiers){
+                if(y === identifierName){
+                    update.sourceControl.dependencies.set(x.name, 1);
+                }
+            }
+        }
+        if(i === state.currentcontext.length){
+            break;
+        }
+        currentContext.push(state.currentcontext[i]);
+    }
+}
+
+function findFirstNameByFunctionDefinition(node: Parser.SyntaxNode, state: State, update: UpDates) {
+    let ret = "";
+    for(const childrenNode of node.children){
+        switch(childrenNode.type){
+            case "function_declarator":
+                ret = childrenNode.children[0].text;
+                break;
+            default:
+                break;
+        };
+    }
+    return ret;
+}
+
+function findFirstNameByTemplateDefinition(node: Parser.SyntaxNode, state : State, update : UpDates){
+    let ret = "";
+    for(const childrenNode of node.children){
+        switch(childrenNode.type){
+            case "function_definition":
+                ret = findFirstNameByFunctionDefinition(childrenNode, state, update);
+                break;
+            default:
+                break;
+        };
+    }
+    return ret;
+}
+
+function scanFunctionForSourceControl(childNode: Parser.SyntaxNode, copyState: State, update: UpDates) {
+    let ret = "";
+    let firstName = "";
+    if(childNode.type === "function_definition"){
+        firstName = findFirstNameByFunctionDefinition(childNode, copyState, update);
+    }
+    if(childNode.type === "template_declaration"){
+        firstName = findFirstNameByTemplateDefinition(childNode, copyState, update);
+    }
+
+    for(const childrenNode of childNode.children){
+        switch(childrenNode.type){
+            default:
+                ret += childrenNode.text;
+                ret += " ";
+                break;
+        };
+    }
+    update.sourceControl.name = copyState.sourceControlName.replace("\r", "")+ "::" + firstName;
+    update.sourceControl.context = [];
+    for(const x of copyState.currentcontext){
+        update.sourceControl.context.push(x);
+    }
+    update.sourceControl.type = "front:" + copyState.sourceControlName.replace("\r", "");
+    update.sourceControl.declaredIdentifiers.push(firstName);
+    update.sourceControl.sourceCode = ret.split("\r\n");
+
+}
+
+function contain(substring: string, text: string) : boolean {
+    if(text.indexOf(substring) !== -1){
+        return true;
+    }
+    return false;
+}
+
+function echoReplace(childNode: Parser.SyntaxNode, state: State, update: UpDates, replaceFrom: string, replaceTo: string) : string {
+    let currentText = childNode.text;
+    let cnt = 0;
+    let retText = "";
+    for(let i = 0; i < currentText.length; ++i){
+        if(currentText[i] === '(' || currentText[i] === '[' || currentText === '{'){
+            ++cnt;
+        }
+        if(currentText[i] === ')' || currentText[i] === ']' || currentText === '}'){
+            --cnt;
+        }
+        if(currentText[i] === replaceFrom && cnt === 0){
+            retText += replaceTo;
+        }else{
+            retText += currentText[i];
+        }
+    }
+    return retText ;
 }
 
